@@ -25,8 +25,9 @@
     --bg: #f3f4f6; --panel: #ffffff; --fg: #0b0d0f; --muted: #5b6470; --line: #d9dde3;
     --accent: #1aa854; --accent-ink: #ffffff; color-scheme: light;
   }
-  html, body { height: 100%; }
+  html { height: 100%; overflow: hidden; }
   body {
+    box-sizing: border-box; min-height: 100%; margin: 0;
     background: var(--bg); color: var(--fg); font-family: var(--font-ui);
     padding-left: max(16px, env(safe-area-inset-left, 0px));
     padding-right: max(16px, env(safe-area-inset-right, 0px));
@@ -95,7 +96,10 @@
   // Add or reorder currencies here. Frankfurter supports every ECB currency (SEK, NOK, PLN, JPY, CNY…).
   const CURRENCIES = ['DKK', 'EUR', 'GBP'];
   const BASE = 'USD';
-  const API = 'https://api.frankfurter.app/latest?from=' + BASE + '&to=' + CURRENCIES.join(',');
+  const APIS = [
+    'https://api.frankfurter.dev/v1/latest?base=' + BASE + '&symbols=' + CURRENCIES.join(','),
+    'https://api.frankfurter.app/latest?from=' + BASE + '&to=' + CURRENCIES.join(','),
+  ];
   const CACHE_KEY = 'usd-convert-rates';
   const MAX_AGE_MS = 20 * 60 * 60 * 1000; // refetch when cache older than 20 h (ECB publishes once a day)
 
@@ -143,11 +147,11 @@
 
   function applyRates(data, source) {
     rates = data;
-    dateEl.textContent = data.date === 'sample' ? 'sample rates' : data.date;
+    dateEl.textContent = data.date === 'sample' ? 'eksempelkurser' : 'ECB ' + data.date;
     statusEl.className = source === 'sample' ? 'warn' : '';
-    statusEl.innerHTML = source === 'live' ? 'ECB rates <b>live</b>'
-                       : source === 'cache' ? 'ECB rates <b>cached</b>'
-                       : '<b>Offline sample</b> – open the real file for live rates';
+    statusEl.innerHTML = source === 'live' ? 'Kurser <b>hentet nu</b>'
+                       : source === 'cache' ? 'Kurser <b>fra cache</b>'
+                       : '<b>Ingen forbindelse</b> – viser eksempelkurser, tryk ↻';
     render();
   }
 
@@ -163,9 +167,16 @@
     const cached = force ? null : readCache();
     if (cached) { applyRates(cached, 'cache'); return; }
     try {
-      const res = await fetch(API);
-      if (!res.ok) throw new Error(res.status);
-      const data = await res.json();
+      let data = null, lastErr = null;
+      for (const url of APIS) {
+        try {
+          const res = await fetch(url, { cache: 'no-store' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          data = await res.json();
+          if (data && data.rates) break;
+        } catch (e) { lastErr = e; }
+      }
+      if (!data || !data.rates) throw lastErr || new Error('no data');
       try { localStorage.setItem(CACHE_KEY, JSON.stringify({ saved: Date.now(), data })); } catch (e) {}
       applyRates(data, 'live');
     } catch (e) {
