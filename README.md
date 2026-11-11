@@ -1,6 +1,6 @@
 # USD Quick Convert
 
-Lille valutaomregner til arbejdsbrug: ét inputfelt (USD som standard), de øvrige valutaer vises live nedenunder.
+Lille valutaomregner til arbejdsbrug: ét felt pr. valuta (USD, DKK, EUR, GBP) – skriv i ét, og de andre regnes om live.
 Kurser hentes én gang om dagen fra [Frankfurter](https://www.frankfurter.app) (ECB-referencekurser).
 
 ## Brug som desktop-widget (Windows, uden installation)
@@ -12,7 +12,7 @@ Kurser hentes én gang om dagen fra [Frankfurter](https://www.frankfurter.app) (
 
 ## Taster
 
-- `Tab` skifter hvilken valuta der omregnes fra: USD → DKK → EUR → GBP → USD (`Shift+Tab` går baglæns).
+- `Tab` flytter markøren til næste valutafelt: USD → DKK → EUR → GBP → USD (`Shift+Tab` går baglæns). Feltet med markøren er det, der omregnes fra.
 - `Ctrl+Tab` skifter mellem omregner og lommeregner.
 - Når vinduet får fokus igen, starter det altid i USD-feltet med det gamle beløb markeret, så næste tast overskriver det.
 

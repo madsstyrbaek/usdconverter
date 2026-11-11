@@ -49,31 +49,27 @@
   /* Flip card: front = converter, back = calculator. Ctrl+Tab toggles .flipped on #card. */
   #card { position: relative; perspective: 900px; }
   .face { backface-visibility: hidden; -webkit-backface-visibility: hidden; }
-  .front { position: relative; display: flex; flex-direction: column; gap: 6px; }
+  .front { position: relative; }
   .back { position: absolute; inset: 0; transform: rotateY(180deg); display: grid; grid-template-rows: auto 1fr; gap: 6px; }
   #inner { position: relative; transform-style: preserve-3d; }
   #card.flipped #inner { transform: rotateY(180deg); }
   @media (prefers-reduced-motion: no-preference) { #inner { transition: transform .35s ease; } }
 
-  .input-wrap {
-    display: grid; grid-template-columns: 1fr auto; align-items: center;
-    background: var(--panel); border: 2px solid var(--accent); border-radius: 5px; padding: 0 10px;
-  }
-  #amount {
-    width: 100%; min-width: 0; background: none; border: 0; outline: none; color: var(--fg);
-    font: 700 24px/1.25 var(--font-ui); padding: 4px 0;
-  }
-  #amount::placeholder { color: var(--muted); font-weight: 500; }
-  .code { font: 600 12px/1 var(--font-label); letter-spacing: .1em; color: var(--accent); }
-
-  .rows { display: flex; flex-direction: column; gap: 4px; }
+  /* One row per currency, fixed order. Each row is an input; the one with the cursor is the currency converted from. */
+  .rows { display: flex; flex-direction: column; gap: 5px; }
   .row {
-    display: grid; grid-template-columns: 44px 1fr; align-items: baseline; gap: 6px;
-    background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 4px 10px;
+    display: grid; grid-template-columns: 44px 1fr; align-items: baseline; column-gap: 6px;
+    background: var(--panel); border: 2px solid var(--line); border-radius: 5px; padding: 5px 9px; cursor: text;
   }
-  .row .code { color: var(--muted); }
-  .row .val { font-size: 18px; font-weight: 700; text-align: right; overflow-wrap: anywhere; line-height: 1.2; }
-  .row small { grid-column: 1 / -1; font-size: 10px; color: var(--muted); text-align: right; line-height: 1.1; }
+  .row .code { font: 600 12px/1 var(--font-label); letter-spacing: .1em; color: var(--muted); }
+  .row input {
+    width: 100%; min-width: 0; background: none; border: 0; outline: none; color: var(--fg); padding: 0;
+    font: 700 18px/1.2 var(--font-ui); text-align: right; font-variant-numeric: tabular-nums;
+  }
+  .row input::placeholder { color: var(--muted); font-weight: 500; }
+  .row small { grid-column: 1 / -1; font-size: 10px; color: var(--muted); text-align: right; line-height: 1.1; min-height: 11px; }
+  .row.active { border-color: var(--accent); }
+  .row.active .code, .row.active small { color: var(--accent); }
 
   /* Calculator (back face) */
   .calc-display {
@@ -110,10 +106,6 @@
 <div id="card">
   <div id="inner">
     <div class="face front" id="front">
-      <div class="input-wrap">
-        <input id="amount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00" aria-label="Amount in US dollars">
-        <span class="code" id="src-code">USD</span>
-      </div>
       <div class="rows" id="rows"></div>
     </div>
 
@@ -171,37 +163,39 @@
   // Fallback used only if the API cannot be reached (e.g. in a sandboxed preview).
   const SAMPLE = { date: 'sample', rates: { DKK: 6.85, EUR: 0.92, GBP: 0.77 } };
 
-  const amountEl = document.getElementById('amount');
   const rowsEl = document.getElementById('rows');
   const dateEl = document.getElementById('date');
   const statusEl = document.getElementById('status');
   let rates = null;
 
-  // Tab cycles which currency the input is in: USD -> DKK -> EUR -> GBP -> USD. The other three are shown as rows.
+  // One input per currency in a fixed order. Tab moves the cursor to the next field; the field with the cursor is the
+  // currency converted from, and the other fields show the result.
   const ALL = [BASE, ...CURRENCIES];
-  const srcCodeEl = document.getElementById('src-code');
+  const inputs = {};
   let src = BASE;
 
-  function buildRows() {
-    rowsEl.textContent = '';
-    for (const c of ALL) {
-      if (c === src) continue;
-      const row = document.createElement('div');
-      row.className = 'row';
-      row.innerHTML = '<span class="code">' + c + '</span><span class="val" id="val-' + c + '">–</span><small id="rate-' + c + '"></small>';
-      rowsEl.appendChild(row);
-    }
+  for (const c of ALL) {
+    const row = document.createElement('label');
+    row.className = 'row';
+    row.id = 'row-' + c;
+    row.innerHTML = '<span class="code">' + c + '</span><input id="in-' + c + '" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" aria-label="Amount in ' + c + '"><small id="rate-' + c + '"></small>';
+    rowsEl.appendChild(row);
+    inputs[c] = row.querySelector('input');
+    inputs[c].addEventListener('focus', () => setSource(c));
+    inputs[c].addEventListener('input', () => { setSource(c); renderValues(); });
   }
   function setSource(c) {
     src = c;
-    srcCodeEl.textContent = src;
-    amountEl.setAttribute('aria-label', 'Amount in ' + src);
+    for (const k of ALL) document.getElementById('row-' + k).classList.toggle('active', k === src);
     if (!flipped) h1El.textContent = src + ' convert';
-    buildRows();
-    render();
+    renderRates();
   }
   // Rates are stored per 1 USD; anything else is a cross rate through USD.
-  function perUsd(c) { return c === BASE ? 1 : rates.rates[c]; }
+  function cross(from, to) {
+    if (!rates) return 0;
+    const a = from === BASE ? 1 : rates.rates[from], b = to === BASE ? 1 : rates.rates[to];
+    return a && b ? b / a : 0;
+  }
 
   const fmt = new Intl.NumberFormat('da-DK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -218,18 +212,24 @@
     return isFinite(n) ? n : 0;
   }
 
-  function render() {
+  // Fills every field except the one being typed in.
+  function renderValues() {
     if (!rates) return;
-    const amt = parseAmount(amountEl.value);
-    const from = perUsd(src);
+    const raw = inputs[src].value.trim();
+    const amt = parseAmount(raw);
     for (const c of ALL) {
       if (c === src) continue;
-      const to = perUsd(c);
-      const r = from && to ? to / from : 0;
-      document.getElementById('val-' + c).textContent = r ? fmt.format(amt * r) : 'n/a';
-      document.getElementById('rate-' + c).textContent = r ? '1 ' + src + ' = ' + r.toFixed(4) + ' ' + c : '';
+      const r = cross(src, c);
+      inputs[c].value = !raw ? '' : r ? fmt.format(amt * r) : 'n/a';
     }
   }
+  function renderRates() {
+    for (const c of ALL) {
+      const r = c === src ? 0 : cross(src, c);
+      document.getElementById('rate-' + c).textContent = c === src ? 'omregnes fra' : r ? '1 ' + src + ' = ' + r.toFixed(4) + ' ' + c : '';
+    }
+  }
+  function render() { renderValues(); renderRates(); }
 
   function applyRates(data, source) {
     rates = data;
@@ -276,11 +276,11 @@
   const h1El = document.querySelector('h1');
   let flipped = false;
 
-  // grab() puts the cursor where the active side needs it: converter = input focused with the old value selected,
+  // grab() puts the cursor where the active side needs it: converter = active field focused with its value selected,
   // calculator = input blurred so numpad keys go to the calculator instead.
   function grab() {
-    if (flipped) { amountEl.blur(); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }
-    else { amountEl.focus(); amountEl.select(); }
+    if (flipped) { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }
+    else { inputs[src].focus(); inputs[src].select(); }
   }
   function setFlipped(v) {
     flipped = v;
@@ -289,20 +289,19 @@
     grab();
   }
   // Coming back to the window (Win+number, Alt-Tab, restore from minimised) always starts over:
-  // converter side, USD as input, old value selected so the next keystroke overwrites it.
+  // converter side, cursor in the USD field, old value selected so the next keystroke overwrites it.
   function home() {
-    if (src !== BASE) setSource(BASE);
+    setSource(BASE);
     setFlipped(false);
   }
   window.addEventListener('focus', home);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) home(); });
   document.addEventListener('click', e => { if (!e.target.closest('button')) grab(); });
-  amountEl.addEventListener('input', render);
   document.getElementById('refresh').addEventListener('click', () => fetchRates(true));
   document.getElementById('flip').addEventListener('click', () => setFlipped(!flipped));
 
   // Tab never moves focus to the footer buttons. Ctrl+Tab flips between converter and calculator.
-  // Plain Tab steps the input currency forward (Shift+Tab backward); from the calculator it just returns to the converter.
+  // Plain Tab moves the cursor to the next currency field (Shift+Tab to the previous); from the calculator it just returns to the converter.
   // Everything else routes to the active side.
   document.addEventListener('keydown', e => {
     if (e.key === 'Tab') {
@@ -313,7 +312,7 @@
       return;
     }
     if (flipped) { if (calcKey(e.key)) e.preventDefault(); return; }
-    if (e.key === 'Escape') { amountEl.value = ''; render(); }
+    if (e.key === 'Escape') { for (const c of ALL) inputs[c].value = ''; }
   }, true);
 
   // ---------- Calculator ----------
@@ -399,7 +398,7 @@
   themeBtn.addEventListener('click', () => applyTheme(currentTheme() === 'dark' ? 'light' : 'dark'));
   try { const saved = localStorage.getItem(THEME_KEY); if (saved) applyTheme(saved); else themeBtn.textContent = currentTheme() === 'dark' ? '☀' : '☾'; } catch (e) {}
 
-  buildRows();
+  setSource(BASE);
   fetchRates(false);
   grab();
 </script>
