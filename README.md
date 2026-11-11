@@ -1,4 +1,4 @@
-# USD Quick Convert
+# Quick Convert
 
 Lille valutaomregner til arbejdsbrug: ét felt pr. valuta (USD, DKK, EUR, GBP) – skriv i ét, og de andre regnes om live.
 Kurser hentes én gang om dagen fra [Frankfurter](https://www.frankfurter.app) (ECB-referencekurser).
