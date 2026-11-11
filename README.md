@@ -1,6 +1,6 @@
 # USD Quick Convert
 
-Lille valutaomregner til arbejdsbrug: ét USD-felt, DKK/EUR/GBP vises live nedenunder.
+Lille valutaomregner til arbejdsbrug: ét inputfelt (USD som standard), de øvrige valutaer vises live nedenunder.
 Kurser hentes én gang om dagen fra [Frankfurter](https://www.frankfurter.app) (ECB-referencekurser).
 
 ## Brug som desktop-widget (Windows, uden installation)
@@ -9,6 +9,12 @@ Kurser hentes én gang om dagen fra [Frankfurter](https://www.frankfurter.app) (
 2. Pin app'en til proceslinjen, fx som nr. 3, så `Win+3` fokuserer den.
 3. PowerToys → Always On Top (`Win+Ctrl+T`) holder vinduet øverst.
 4. Vinduet lægger selv markøren i USD-feltet, hver gang det får fokus. Skriv beløbet, aflæs kurserne. `Esc` rydder.
+
+## Taster
+
+- `Tab` skifter hvilken valuta der omregnes fra: USD → DKK → EUR → GBP → USD (`Shift+Tab` går baglæns).
+- `Ctrl+Tab` skifter mellem omregner og lommeregner.
+- Når vinduet får fokus igen, starter det altid i USD-feltet med det gamle beløb markeret, så næste tast overskriver det.
 
 ## Tilføj valutaer
 

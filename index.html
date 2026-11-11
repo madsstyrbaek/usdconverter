@@ -46,7 +46,7 @@
   h1 { margin: 0; font: 600 11px/1 var(--font-label); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
   #date { font-size: 10px; color: var(--muted); }
 
-  /* Flip card: front = converter, back = calculator. Tab toggles .flipped on #card. */
+  /* Flip card: front = converter, back = calculator. Ctrl+Tab toggles .flipped on #card. */
   #card { position: relative; perspective: 900px; }
   .face { backface-visibility: hidden; -webkit-backface-visibility: hidden; }
   .front { position: relative; display: flex; flex-direction: column; gap: 6px; }
@@ -112,7 +112,7 @@
     <div class="face front" id="front">
       <div class="input-wrap">
         <input id="amount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00" aria-label="Amount in US dollars">
-        <span class="code">USD</span>
+        <span class="code" id="src-code">USD</span>
       </div>
       <div class="rows" id="rows"></div>
     </div>
@@ -151,7 +151,7 @@
 <footer>
   <span id="status">Loading rates…</span>
   <span class="btns">
-    <button id="flip" type="button" tabindex="-1" title="Skift mellem omregner og lommeregner (Tab)">⇄</button>
+    <button id="flip" type="button" tabindex="-1" title="Skift mellem omregner og lommeregner (Ctrl+Tab)">⇄</button>
     <button id="theme" type="button" tabindex="-1" title="Skift mellem lys og mørk">☾</button>
     <button id="refresh" type="button" tabindex="-1" title="Fetch rates again">↻</button>
   </span>
@@ -177,13 +177,31 @@
   const statusEl = document.getElementById('status');
   let rates = null;
 
-  // Build one row per currency
-  for (const c of CURRENCIES) {
-    const row = document.createElement('div');
-    row.className = 'row';
-    row.innerHTML = '<span class="code">' + c + '</span><span class="val" id="val-' + c + '">–</span><small id="rate-' + c + '"></small>';
-    rowsEl.appendChild(row);
+  // Tab cycles which currency the input is in: USD -> DKK -> EUR -> GBP -> USD. The other three are shown as rows.
+  const ALL = [BASE, ...CURRENCIES];
+  const srcCodeEl = document.getElementById('src-code');
+  let src = BASE;
+
+  function buildRows() {
+    rowsEl.textContent = '';
+    for (const c of ALL) {
+      if (c === src) continue;
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.innerHTML = '<span class="code">' + c + '</span><span class="val" id="val-' + c + '">–</span><small id="rate-' + c + '"></small>';
+      rowsEl.appendChild(row);
+    }
   }
+  function setSource(c) {
+    src = c;
+    srcCodeEl.textContent = src;
+    amountEl.setAttribute('aria-label', 'Amount in ' + src);
+    if (!flipped) h1El.textContent = src + ' convert';
+    buildRows();
+    render();
+  }
+  // Rates are stored per 1 USD; anything else is a cross rate through USD.
+  function perUsd(c) { return c === BASE ? 1 : rates.rates[c]; }
 
   const fmt = new Intl.NumberFormat('da-DK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -203,10 +221,13 @@
   function render() {
     if (!rates) return;
     const amt = parseAmount(amountEl.value);
-    for (const c of CURRENCIES) {
-      const r = rates.rates[c];
+    const from = perUsd(src);
+    for (const c of ALL) {
+      if (c === src) continue;
+      const to = perUsd(c);
+      const r = from && to ? to / from : 0;
       document.getElementById('val-' + c).textContent = r ? fmt.format(amt * r) : 'n/a';
-      document.getElementById('rate-' + c).textContent = r ? '1 USD = ' + r.toFixed(4) + ' ' + c : '';
+      document.getElementById('rate-' + c).textContent = r ? '1 ' + src + ' = ' + r.toFixed(4) + ' ' + c : '';
     }
   }
 
@@ -255,8 +276,8 @@
   const h1El = document.querySelector('h1');
   let flipped = false;
 
-  // Focus behaviour: whenever the window gets focus (Win+number, Alt-Tab, click), land in the input with the old value selected.
-  // In calculator mode the input is blurred so numpad keys go to the calculator instead.
+  // grab() puts the cursor where the active side needs it: converter = input focused with the old value selected,
+  // calculator = input blurred so numpad keys go to the calculator instead.
   function grab() {
     if (flipped) { amountEl.blur(); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }
     else { amountEl.focus(); amountEl.select(); }
@@ -264,19 +285,33 @@
   function setFlipped(v) {
     flipped = v;
     cardEl.classList.toggle('flipped', flipped);
-    h1El.textContent = flipped ? 'Lommeregner' : 'USD convert';
+    h1El.textContent = flipped ? 'Lommeregner' : src + ' convert';
     grab();
   }
-  window.addEventListener('focus', grab);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) grab(); });
+  // Coming back to the window (Win+number, Alt-Tab, restore from minimised) always starts over:
+  // converter side, USD as input, old value selected so the next keystroke overwrites it.
+  function home() {
+    if (src !== BASE) setSource(BASE);
+    setFlipped(false);
+  }
+  window.addEventListener('focus', home);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) home(); });
   document.addEventListener('click', e => { if (!e.target.closest('button')) grab(); });
   amountEl.addEventListener('input', render);
   document.getElementById('refresh').addEventListener('click', () => fetchRates(true));
   document.getElementById('flip').addEventListener('click', () => setFlipped(!flipped));
 
-  // Tab never moves focus to the footer buttons; it flips the card instead. Everything else routes to the active side.
+  // Tab never moves focus to the footer buttons. Ctrl+Tab flips between converter and calculator.
+  // Plain Tab steps the input currency forward (Shift+Tab backward); from the calculator it just returns to the converter.
+  // Everything else routes to the active side.
   document.addEventListener('keydown', e => {
-    if (e.key === 'Tab') { e.preventDefault(); setFlipped(!flipped); return; }
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      if (e.ctrlKey) setFlipped(!flipped);
+      else if (flipped) setFlipped(false);
+      else { setSource(ALL[(ALL.indexOf(src) + (e.shiftKey ? ALL.length - 1 : 1)) % ALL.length]); grab(); }
+      return;
+    }
     if (flipped) { if (calcKey(e.key)) e.preventDefault(); return; }
     if (e.key === 'Escape') { amountEl.value = ''; render(); }
   }, true);
@@ -364,6 +399,7 @@
   themeBtn.addEventListener('click', () => applyTheme(currentTheme() === 'dark' ? 'light' : 'dark'));
   try { const saved = localStorage.getItem(THEME_KEY); if (saved) applyTheme(saved); else themeBtn.textContent = currentTheme() === 'dark' ? '☀' : '☾'; } catch (e) {}
 
+  buildRows();
   fetchRates(false);
   grab();
 </script>
