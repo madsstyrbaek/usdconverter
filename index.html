@@ -2,6 +2,11 @@
 <meta charset="utf-8">
 <title>Quick Convert</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#00442f">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="icon" href="icon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="manifest" href="manifest.json">
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@500;600;700&family=Barlow+Condensed:wght@600&display=swap">
 <style>
@@ -49,7 +54,7 @@
   /* Flip card: front = converter, back = calculator. Ctrl+Tab toggles .flipped on #card. */
   #card { position: relative; perspective: 900px; }
   .face { backface-visibility: hidden; -webkit-backface-visibility: hidden; }
-  .front { position: relative; }
+  .front { position: relative; min-height: 201px; } /* four rows tall, so the calculator on the back always fits */
   .back { position: absolute; inset: 0; transform: rotateY(180deg); display: grid; grid-template-rows: auto 1fr; gap: 6px; }
   #inner { position: relative; transform-style: preserve-3d; }
   #card.flipped #inner { transform: rotateY(180deg); }
@@ -70,6 +75,28 @@
   .row small { grid-column: 1 / -1; font-size: 10px; color: var(--muted); text-align: right; line-height: 1.1; min-height: 11px; }
   .row.active { border-color: var(--accent); }
   .row.active .code, .row.active small { color: var(--accent); }
+
+  /* Edit mode: replaces the rows on the front face. Compact lines with move/delete buttons and an add dropdown. */
+  #elist { display: flex; flex-direction: column; gap: 3px; }
+  #edit { display: none; flex-direction: column; gap: 4px; max-height: calc(100vh - 78px); overflow-y: auto; }
+  #card.editing #rows { display: none; }
+  #card.editing #edit { display: flex; }
+  .erow {
+    display: grid; grid-template-columns: 40px 1fr auto auto auto; align-items: center; gap: 4px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 2px 4px 2px 9px;
+  }
+  .erow .code { font: 600 12px/1 var(--font-label); letter-spacing: .1em; color: var(--fg); }
+  .erow .name { font-size: 10px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .erow:first-child .code { color: var(--accent); }
+  .erow button, #add {
+    background: none; border: 1px solid var(--line); color: var(--fg); border-radius: 4px;
+    font: 600 12px/1 var(--font-ui); cursor: pointer; height: 20px;
+  }
+  .erow button { width: 22px; padding: 0; }
+  .erow button:hover:not(:disabled), #add:hover { border-color: var(--accent); }
+  .erow button:disabled { opacity: .3; cursor: default; }
+  #add { width: 100%; height: 24px; padding: 0 6px; background: var(--panel); color: var(--muted); font-weight: 500; font-size: 11px; }
+  .ehint { font-size: 10px; color: var(--muted); line-height: 1.2; }
 
   /* Calculator (back face) */
   .calc-display {
@@ -107,6 +134,11 @@
   <div id="inner">
     <div class="face front" id="front">
       <div class="rows" id="rows"></div>
+      <div id="edit">
+        <div id="elist"></div>
+        <select id="add" tabindex="-1" aria-label="Tilføj valuta"></select>
+        <span class="ehint">Øverste valuta er standard. Esc eller ⚙ lukker.</span>
+      </div>
     </div>
 
     <div class="face back" id="back" aria-label="Lommeregner">
@@ -143,6 +175,7 @@
 <footer>
   <span id="status">Loading rates…</span>
   <span class="btns">
+    <button id="edit-btn" type="button" tabindex="-1" title="Tilføj, slet og flyt valutaer">⚙</button>
     <button id="flip" type="button" tabindex="-1" title="Skift mellem omregner og lommeregner (Ctrl+Tab)">⇄</button>
     <button id="theme" type="button" tabindex="-1" title="Skift mellem lys og mørk">☾</button>
     <button id="refresh" type="button" tabindex="-1" title="Fetch rates again">↻</button>
@@ -150,49 +183,69 @@
 </footer>
 
 <script>
-  // Add or reorder currencies here. Frankfurter supports every ECB currency (SEK, NOK, PLN, JPY, CNY…).
-  const CURRENCIES = ['DKK', 'EUR', 'GBP'];
-  const BASE = 'USD';
+  // Currencies are chosen in the tool itself (the ⚙ button) and remembered in localStorage. The first one is the default:
+  // it gets the cursor when the window opens or regains focus. DEFAULT_LIST is only used until the user changes something.
+  const DEFAULT_LIST = ['USD', 'DKK', 'EUR', 'GBP'];
+  const LIST_KEY = 'quick-convert-currencies';
+  // All rates are fetched against one fixed base, whatever the list holds, so adding a currency needs no new request
+  // and the base currency itself can be removed from the list.
+  const RBASE = 'USD';
   const APIS = [
-    'https://api.frankfurter.dev/v1/latest?base=' + BASE + '&symbols=' + CURRENCIES.join(','),
-    'https://api.frankfurter.app/latest?from=' + BASE + '&to=' + CURRENCIES.join(','),
+    'https://api.frankfurter.dev/v1/latest?base=' + RBASE,
+    'https://api.frankfurter.app/latest?from=' + RBASE,
   ];
-  const CACHE_KEY = 'usd-convert-rates';
+  const CACHE_KEY = 'quick-convert-rates';
   const MAX_AGE_MS = 20 * 60 * 60 * 1000; // refetch when cache older than 20 h (ECB publishes once a day)
 
   // Fallback used only if the API cannot be reached (e.g. in a sandboxed preview).
-  const SAMPLE = { date: 'sample', rates: { DKK: 6.85, EUR: 0.92, GBP: 0.77 } };
+  const SAMPLE = { date: 'sample', rates: { DKK: 6.85, EUR: 0.92, GBP: 0.77, SEK: 10.4, NOK: 10.9, CHF: 0.88, PLN: 3.95, JPY: 152, CAD: 1.39 } };
+
+  function loadList() {
+    try {
+      const l = JSON.parse(localStorage.getItem(LIST_KEY) || 'null');
+      if (Array.isArray(l)) {
+        const clean = [...new Set(l.filter(c => typeof c === 'string' && /^[A-Z]{3}$/.test(c)))];
+        if (clean.length >= 2) return clean;
+      }
+    } catch (e) {}
+    return DEFAULT_LIST.slice();
+  }
+  function saveList() { try { localStorage.setItem(LIST_KEY, JSON.stringify(list)); } catch (e) {} }
+  let list = loadList();
 
   const rowsEl = document.getElementById('rows');
   const dateEl = document.getElementById('date');
   const statusEl = document.getElementById('status');
   let rates = null;
 
-  // One input per currency in a fixed order. Tab moves the cursor to the next field; the field with the cursor is the
+  // One input per currency, in the user's order. Tab moves the cursor to the next field; the field with the cursor is the
   // currency converted from, and the other fields show the result.
-  const ALL = [BASE, ...CURRENCIES];
-  const inputs = {};
-  let src = BASE;
+  let inputs = {};
+  let src = list[0];
 
-  for (const c of ALL) {
-    const row = document.createElement('label');
-    row.className = 'row';
-    row.id = 'row-' + c;
-    row.innerHTML = '<span class="code">' + c + '</span><input id="in-' + c + '" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" aria-label="Amount in ' + c + '"><small id="rate-' + c + '"></small>';
-    rowsEl.appendChild(row);
-    inputs[c] = row.querySelector('input');
-    inputs[c].addEventListener('focus', () => setSource(c));
-    inputs[c].addEventListener('input', () => { setSource(c); renderValues(); });
+  function buildRows() {
+    rowsEl.textContent = '';
+    inputs = {};
+    for (const c of list) {
+      const row = document.createElement('label');
+      row.className = 'row';
+      row.id = 'row-' + c;
+      row.innerHTML = '<span class="code">' + c + '</span><input id="in-' + c + '" type="text" inputmode="decimal" autocomplete="off" placeholder="0,00" aria-label="Amount in ' + c + '"><small id="rate-' + c + '"></small>';
+      rowsEl.appendChild(row);
+      inputs[c] = row.querySelector('input');
+      inputs[c].addEventListener('focus', () => setSource(c));
+      inputs[c].addEventListener('input', () => { setSource(c); renderValues(); });
+    }
   }
   function setSource(c) {
     src = c;
-    for (const k of ALL) document.getElementById('row-' + k).classList.toggle('active', k === src);
+    for (const k of list) document.getElementById('row-' + k).classList.toggle('active', k === src);
     renderRates();
   }
-  // Rates are stored per 1 USD; anything else is a cross rate through USD.
+  // Rates are stored per 1 RBASE; anything else is a cross rate through it.
   function cross(from, to) {
     if (!rates) return 0;
-    const a = from === BASE ? 1 : rates.rates[from], b = to === BASE ? 1 : rates.rates[to];
+    const a = from === RBASE ? 1 : rates.rates[from], b = to === RBASE ? 1 : rates.rates[to];
     return a && b ? b / a : 0;
   }
 
@@ -216,14 +269,14 @@
     if (!rates) return;
     const raw = inputs[src].value.trim();
     const amt = parseAmount(raw);
-    for (const c of ALL) {
+    for (const c of list) {
       if (c === src) continue;
       const r = cross(src, c);
       inputs[c].value = !raw ? '' : r ? fmt.format(amt * r) : 'n/a';
     }
   }
   function renderRates() {
-    for (const c of ALL) {
+    for (const c of list) {
       const r = c === src ? 0 : cross(src, c);
       document.getElementById('rate-' + c).textContent = c === src ? 'omregnes fra' : r ? '1 ' + src + ' = ' + r.toFixed(4) + ' ' + c : '';
     }
@@ -238,6 +291,7 @@
                        : source === 'cache' ? 'Kurser <b>fra cache</b>'
                        : '<b>Ingen forbindelse</b> – viser eksempelkurser, tryk ↻';
     render();
+    if (editing) buildEdit(); // the add dropdown lists what the rates cover
   }
 
   function readCache() {
@@ -278,24 +332,27 @@
   // grab() puts the cursor where the active side needs it: converter = active field focused with its value selected,
   // calculator = input blurred so numpad keys go to the calculator instead.
   function grab() {
+    if (editing) return;
     if (flipped) { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }
     else { inputs[src].focus(); inputs[src].select(); }
   }
   function setFlipped(v) {
+    if (v && editing) setEditing(false);
     flipped = v;
     cardEl.classList.toggle('flipped', flipped);
     h1El.textContent = flipped ? 'Lommeregner' : 'Quick convert';
     grab();
   }
   // Coming back to the window (Win+number, Alt-Tab, restore from minimised) always starts over:
-  // converter side, cursor in the USD field, old value selected so the next keystroke overwrites it.
+  // converter side, cursor in the first (default) field, old value selected so the next keystroke overwrites it.
   function home() {
-    setSource(BASE);
+    if (editing) return; // stay in edit mode until it is closed
+    setSource(list[0]);
     setFlipped(false);
   }
   window.addEventListener('focus', home);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) home(); });
-  document.addEventListener('click', e => { if (!e.target.closest('button')) grab(); });
+  document.addEventListener('click', e => { if (!e.target.closest('button, select')) grab(); });
   document.getElementById('refresh').addEventListener('click', () => fetchRates(true));
   document.getElementById('flip').addEventListener('click', () => setFlipped(!flipped));
 
@@ -306,13 +363,79 @@
     if (e.key === 'Tab') {
       e.preventDefault();
       if (e.ctrlKey) setFlipped(!flipped);
+      else if (editing) {}
       else if (flipped) setFlipped(false);
-      else { setSource(ALL[(ALL.indexOf(src) + (e.shiftKey ? ALL.length - 1 : 1)) % ALL.length]); grab(); }
+      else { setSource(list[(list.indexOf(src) + (e.shiftKey ? list.length - 1 : 1)) % list.length]); grab(); }
       return;
     }
+    if (editing) { if (e.key === 'Escape') { e.preventDefault(); setEditing(false); } return; }
     if (flipped) { if (calcKey(e.key)) e.preventDefault(); return; }
-    if (e.key === 'Escape') { for (const c of ALL) inputs[c].value = ''; }
+    if (e.key === 'Escape') { for (const c of list) inputs[c].value = ''; }
   }, true);
+
+  // ---------- Edit mode: add, remove and reorder currencies ----------
+  const elistEl = document.getElementById('elist');
+  const addEl = document.getElementById('add');
+  let editing = false;
+  let names = null;
+  try { names = new Intl.DisplayNames(['da'], { type: 'currency' }); } catch (e) {}
+  function nameOf(c) { try { const n = names && names.of(c); return n && n !== c ? n : ''; } catch (e) { return ''; } }
+
+  function buildEdit() {
+    elistEl.textContent = '';
+    list.forEach((c, i) => {
+      const r = document.createElement('div');
+      r.className = 'erow';
+      r.innerHTML = '<span class="code">' + c + '</span><span class="name">' + (i === 0 ? 'standard' : nameOf(c)) + '</span>'
+        + '<button type="button" tabindex="-1" data-act="up" title="Flyt op"' + (i === 0 ? ' disabled' : '') + '>↑</button>'
+        + '<button type="button" tabindex="-1" data-act="down" title="Flyt ned"' + (i === list.length - 1 ? ' disabled' : '') + '>↓</button>'
+        + '<button type="button" tabindex="-1" data-act="del" title="Fjern"' + (list.length <= 2 ? ' disabled' : '') + '>✕</button>';
+      r.dataset.code = c;
+      elistEl.appendChild(r);
+    });
+    const avail = rates ? [RBASE, ...Object.keys(rates.rates)] : DEFAULT_LIST;
+    const rest = [...new Set(avail)].filter(c => !list.includes(c)).sort();
+    addEl.textContent = '';
+    addEl.add(new Option(rest.length ? '+ Tilføj valuta…' : 'Alle valutaer er tilføjet', ''));
+    for (const c of rest) addEl.add(new Option(c + (nameOf(c) ? ' – ' + nameOf(c) : ''), c));
+    addEl.disabled = !rest.length;
+  }
+  // Rebuilds the fields after the list changed. Amounts are kept by converting from the first currency that still has one.
+  function listChanged() {
+    saveList();
+    const keep = list.includes(src) ? src : null;
+    const raw = keep ? inputs[keep].value : '';
+    buildRows();
+    src = keep || list[0];
+    if (keep) inputs[keep].value = raw;
+    setSource(src);
+    renderValues();
+    buildEdit();
+  }
+  elistEl.addEventListener('mousedown', e => e.preventDefault());
+  elistEl.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b || b.disabled) return;
+    const i = list.indexOf(b.closest('.erow').dataset.code);
+    if (b.dataset.act === 'up' && i > 0) [list[i - 1], list[i]] = [list[i], list[i - 1]];
+    else if (b.dataset.act === 'down' && i < list.length - 1) [list[i + 1], list[i]] = [list[i], list[i + 1]];
+    else if (b.dataset.act === 'del' && list.length > 2) list.splice(i, 1);
+    else return;
+    listChanged();
+  });
+  addEl.addEventListener('change', () => {
+    const c = addEl.value;
+    if (c && !list.includes(c)) { list.push(c); listChanged(); }
+  });
+  function setEditing(v) {
+    if (v && flipped) setFlipped(false);
+    editing = v;
+    cardEl.classList.toggle('editing', editing);
+    h1El.textContent = editing ? 'Valutaer' : flipped ? 'Lommeregner' : 'Quick convert';
+    if (editing) { buildEdit(); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }
+    else { setSource(list[0]); grab(); }
+  }
+  document.getElementById('edit-btn').addEventListener('click', () => setEditing(!editing));
 
   // ---------- Calculator ----------
   // State survives flipping away. After "=" the next digit starts fresh, an operator continues from the result
@@ -397,7 +520,8 @@
   themeBtn.addEventListener('click', () => applyTheme(currentTheme() === 'dark' ? 'light' : 'dark'));
   try { const saved = localStorage.getItem(THEME_KEY); if (saved) applyTheme(saved); else themeBtn.textContent = currentTheme() === 'dark' ? '☀' : '☾'; } catch (e) {}
 
-  setSource(BASE);
+  buildRows();
+  setSource(list[0]);
   fetchRates(false);
   grab();
 </script>
