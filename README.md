@@ -5,7 +5,7 @@ Kurser hentes én gang om dagen fra [Frankfurter](https://www.frankfurter.app) (
 
 ## Brug som desktop-widget (Windows, uden installation)
 
-1. Åbn siden i Edge → menu (…) → Apps → *Install this site as an app*.
+1. Åbn siden i Edge og tryk *Installér som app* nederst på siden (eller menu (…) → Apps → *Install this site as an app*). Sæt flueben ved *Fastgør til proceslinje*, når Edge spørger.
 2. Pin app'en til proceslinjen, fx som nr. 3, så `Win+3` fokuserer den.
 3. PowerToys → Always On Top (`Win+Ctrl+T`) holder vinduet øverst.
 4. Vinduet lægger selv markøren i det øverste felt, hver gang det får fokus. Skriv beløbet, aflæs kurserne. `Esc` rydder.
